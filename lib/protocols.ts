@@ -6,76 +6,181 @@ export interface Protocol {
   decode: (bits: number[]) => number[]
 }
 
-export const repetitionProtocol = (rateFactor: number): Protocol => ({
-  id: `rep1/${rateFactor}`,
-  label: `Repetition 1/${rateFactor}`,
-  rate: 1 / rateFactor,
-  encode: (bits) => bits.flatMap((bit) => Array(rateFactor).fill(bit)),
-  decode: (bits) => {
-    const decoded: number[] = []
-    for (let i = 0; i < bits.length; i += rateFactor) {
-      const chunk = bits.slice(i, i + rateFactor)
-      const sum = chunk.reduce((a, b) => a + b, 0)
-      decoded.push(sum > rateFactor / 2 ? 1 : 0)
+// Helper function to check if a number is a power of 2
+function isPowerOfTwo(n: number): boolean {
+  return n > 0 && (n & (n - 1)) === 0
+}
+
+// Generic Repetition Code (matches Python implementation)
+export function genericRepetitionEncode(data: number[], n: number): number[] {
+  const encoded: number[] = []
+  for (const bit of data) {
+    for (let i = 0; i < n; i++) {
+      encoded.push(bit)
     }
-    return decoded
-  },
+  }
+  return encoded
+}
+
+export function genericRepetitionDecode(received: number[], n: number): number[] {
+  const decoded: number[] = []
+  for (let i = 0; i < received.length; i += n) {
+    const block = received.slice(i, i + n)
+    const sum = block.reduce((a, b) => a + b, 0)
+    // Majority voting
+    decoded.push(sum > n / 2 ? 1 : 0)
+  }
+  return decoded
+}
+
+// Generic Hamming Code (matches Python implementation)
+export function genericHammingEncode(data: number[], n: number, k: number): number[] {
+  // Calculate number of parity bits
+  const m = Math.ceil(Math.log2(n + 1))
+  
+  // Validate that n = 2^m - 1
+  if (n !== Math.pow(2, m) - 1) {
+    console.error(`Invalid Hamming parameters: n=${n} must equal 2^m - 1 for some m`)
+    return data // Return unencoded if invalid
+  }
+
+  const encoded: number[] = []
+  
+  // Process data in blocks of k bits
+  for (let blockStart = 0; blockStart < data.length; blockStart += k) {
+    const dataBlock = data.slice(blockStart, blockStart + k)
+    
+    // Pad with zeros if incomplete block
+    while (dataBlock.length < k) {
+      dataBlock.push(0)
+    }
+
+    // Initialize codeword array
+    const codeword = new Array(n).fill(0)
+    let dataIdx = 0
+
+    // Place data bits in non-power-of-2 positions (systematic encoding)
+    for (let pos = 1; pos <= n; pos++) {
+      if (!isPowerOfTwo(pos)) {
+        codeword[pos - 1] = dataBlock[dataIdx]
+        dataIdx++
+      }
+    }
+
+    // Calculate parity bits
+    for (let parityIdx = 0; parityIdx < m; parityIdx++) {
+      const parityPos = Math.pow(2, parityIdx)
+      let parity = 0
+      
+      // Check all positions where this parity bit applies
+      for (let pos = 1; pos <= n; pos++) {
+        if ((pos & parityPos) !== 0) {
+          parity ^= codeword[pos - 1]
+        }
+      }
+      
+      codeword[parityPos - 1] = parity
+    }
+
+    encoded.push(...codeword)
+  }
+
+  return encoded
+}
+
+export function genericHammingDecode(received: number[], n: number, k: number): number[] {
+  const m = Math.ceil(Math.log2(n + 1))
+  const decoded: number[] = []
+
+  // Process received data in blocks of n bits
+  for (let blockStart = 0; blockStart < received.length; blockStart += n) {
+    const block = received.slice(blockStart, blockStart + n)
+    
+    // Skip incomplete blocks
+    if (block.length < n) break
+
+    // Calculate syndrome for error detection
+    let syndrome = 0
+    for (let parityIdx = 0; parityIdx < m; parityIdx++) {
+      const parityPos = Math.pow(2, parityIdx)
+      let parity = 0
+      
+      for (let pos = 1; pos <= n; pos++) {
+        if ((pos & parityPos) !== 0) {
+          parity ^= block[pos - 1]
+        }
+      }
+      
+      if (parity !== 0) {
+        syndrome |= parityPos
+      }
+    }
+
+    // Correct single-bit error if detected
+    if (syndrome !== 0 && syndrome <= n) {
+      block[syndrome - 1] ^= 1
+    }
+
+    // Extract data bits from non-power-of-2 positions
+    for (let pos = 1; pos <= n; pos++) {
+      if (!isPowerOfTwo(pos)) {
+        decoded.push(block[pos - 1])
+      }
+    }
+  }
+
+  return decoded
+}
+
+// Factory function to create generic protocols dynamically
+export function createGenericProtocol(
+  type: "repetition" | "hamming",
+  n: number,
+  k?: number
+): Protocol {
+  if (type === "repetition") {
+    return {
+      id: `generic-rep-${n}`,
+      label: `Generic Rep (1/${n})`,
+      rate: 1 / n,
+      encode: (bits) => genericRepetitionEncode(bits, n),
+      decode: (bits) => genericRepetitionDecode(bits, n),
+    }
+  } else {
+    // Hamming code
+    const kVal = k || n - Math.ceil(Math.log2(n + 1))
+    return {
+      id: `generic-ham-${n}-${kVal}`,
+      label: `Generic Ham (${n},${kVal})`,
+      rate: kVal / n,
+      encode: (bits) => genericHammingEncode(bits, n, kVal),
+      decode: (bits) => genericHammingDecode(bits, n, kVal),
+    }
+  }
+}
+
+export const genericHammingProtocol = (n: number, k: number): Protocol => {
+  const m = Math.ceil(Math.log2(n + 1))
+
+  return {
+    id: `hamming-${n}-${k}`,
+    label: `Hamming (${n},${k})`,
+    rate: k / n,
+    encode: (bits) => genericHammingEncode(bits, n, k),
+    decode: (bits) => genericHammingDecode(bits, n, k),
+  }
+}
+
+export const repetitionProtocol = (n: number): Protocol => ({
+  id: `rep-1/${n}`,
+  label: `Repetition 1/${n}`,
+  rate: 1 / n,
+  encode: (bits) => genericRepetitionEncode(bits, n),
+  decode: (bits) => genericRepetitionDecode(bits, n),
 })
 
-export const hamming74Protocol: Protocol = {
-  id: "hamming74",
-  label: "Hamming (7,4)",
-  rate: 4 / 7,
-  encode: (bits) => {
-    const encoded: number[] = []
-    for (let i = 0; i < bits.length; i += 4) {
-      const b = bits.slice(i, i + 4)
-      if (b.length < 4) break
-      const p1 = (b[0] + b[1] + b[3]) % 2
-      const p2 = (b[0] + b[2] + b[3]) % 2
-      const p3 = (b[1] + b[2] + b[3]) % 2
-      encoded.push(p1, p2, b[0], p3, b[1], b[2], b[3])
-    }
-    return encoded
-  },
-  decode: (bits) => {
-    const decoded: number[] = []
-    for (let i = 0; i < bits.length; i += 7) {
-      const r = bits.slice(i, i + 7)
-      if (r.length < 7) break
-      decoded.push(r[2], r[4], r[5], r[6])
-    }
-    return decoded
-  },
-}
-
-export const hamming1511Protocol: Protocol = {
-  id: "hamming1511",
-  label: "Hamming (15,11)",
-  rate: 11 / 15,
-  encode: (bits) => {
-    const encoded: number[] = []
-    for (let i = 0; i < bits.length; i += 11) {
-      const b = bits.slice(i, i + 11)
-      if (b.length < 11) break
-      const p1 = (b[0] + b[1] + b[3] + b[4] + b[6] + b[8] + b[10]) % 2
-      const p2 = (b[0] + b[2] + b[3] + b[5] + b[6] + b[9] + b[10]) % 2
-      const p3 = (b[1] + b[2] + b[3] + b[7] + b[8] + b[9] + b[10]) % 2
-      const p4 = (b[4] + b[5] + b[6] + b[7] + b[8] + b[9] + b[10]) % 2
-      encoded.push(p1, p2, b[0], p3, b[1], b[2], b[3], p4, b[4], b[5], b[6], b[7], b[8], b[9], b[10])
-    }
-    return encoded
-  },
-  decode: (bits) => {
-    const decoded: number[] = []
-    for (let i = 0; i < bits.length; i += 15) {
-      const r = bits.slice(i, i + 15)
-      if (r.length < 15) break
-      decoded.push(r[2], r[4], r[5], r[6], r[8], r[9], r[10], r[11], r[12], r[13], r[14])
-    }
-    return decoded
-  },
-}
+export const hamming74Protocol = genericHammingProtocol(7, 4)
+export const hamming1511Protocol = genericHammingProtocol(15, 11)
 
 export const uncodedProtocol: Protocol = {
   id: "none",

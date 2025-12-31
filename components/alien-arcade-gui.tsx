@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -8,7 +8,14 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts"
 import { Activity, Zap, Cpu, Terminal, ShieldAlert } from "lucide-react"
-import { PROTOCOLS, type Protocol, uncodedProtocol } from "@/lib/protocols"
+import {
+  type Protocol,
+  uncodedProtocol,
+  repetitionProtocol,
+  hamming74Protocol,
+  hamming1511Protocol,
+  createGenericProtocol,
+} from "@/lib/protocols"
 
 const simulateBer = (snrDb: number, channelType: string, protocol: Protocol) => {
   const numBits = 1000
@@ -44,8 +51,23 @@ const simulateBer = (snrDb: number, channelType: string, protocol: Protocol) => 
 export default function AlienArcadeGUI() {
   const [snrRange, setSnrRange] = useState({ start: 0, end: 12 })
   const [channelType, setChannelType] = useState("awgn")
-  const [currentProtocol, setCurrentProtocol] = useState<Protocol>(PROTOCOLS[3]) // Default to Hamming(7,4)
+  const [protocolType, setProtocolType] = useState<"repetition" | "hamming" | "none" | "generic">("hamming")
+  const [protocolParam, setProtocolParam] = useState<string>("74")
+  const [genericType, setGenericType] = useState<"repetition" | "hamming">("hamming")
+  const [genericN, setGenericN] = useState<string>("31")
+  const [genericK, setGenericK] = useState<string>("26")
   const [chartData, setChartData] = useState<any[]>([])
+
+  const currentProtocol = useMemo(() => {
+    if (protocolType === "generic") {
+      const n = Number.parseInt(genericN) || 3
+      const k = genericType === "hamming" ? Number.parseInt(genericK) || Math.floor(n * 0.8) : undefined
+      return createGenericProtocol(genericType, n, k)
+    }
+    if (protocolType === "none") return uncodedProtocol
+    if (protocolType === "repetition") return repetitionProtocol(Number.parseInt(protocolParam) || 3)
+    return protocolParam === "1511" ? hamming1511Protocol : hamming74Protocol
+  }, [protocolType, protocolParam, genericType, genericN, genericK])
 
   const handleUpdatePlot = () => {
     const data = []
@@ -122,25 +144,172 @@ export default function AlienArcadeGUI() {
             </div>
 
             <div className="space-y-4">
-              <Label className="text-lime-400 font-bold uppercase tracking-widest">Protocol (Coding Scheme)</Label>
+              <Label className="text-lime-400 font-bold uppercase tracking-widest">Protocol Type</Label>
               <RadioGroup
-                value={currentProtocol.id}
-                onValueChange={(id) => setCurrentProtocol(PROTOCOLS.find((p) => p.id === id) || uncodedProtocol)}
-                className="space-y-2"
+                value={protocolType}
+                onValueChange={(val: any) => {
+                  setProtocolType(val)
+                  // Reset default params when switching types
+                  if (val === "repetition") setProtocolParam("3")
+                  if (val === "hamming") setProtocolParam("74")
+                }}
+                className="grid grid-cols-2 gap-2"
               >
-                {PROTOCOLS.map((protocol) => (
-                  <div
-                    key={protocol.id}
-                    className="flex items-center space-x-2 bg-black/50 p-3 border-2 border-zinc-700 rounded cursor-pointer hover:border-cyan-400 transition-colors"
+                <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-cyan-400">
+                  <RadioGroupItem value="hamming" id="type-hamming" className="border-cyan-400 text-cyan-400" />
+                  <Label
+                    htmlFor="type-hamming"
+                    className="text-zinc-300 cursor-pointer uppercase font-bold text-[10px]"
                   >
-                    <RadioGroupItem value={protocol.id} id={protocol.id} className="border-cyan-400 text-cyan-400" />
-                    <Label htmlFor={protocol.id} className="text-zinc-300 cursor-pointer uppercase font-bold text-xs">
-                      {protocol.label}
-                    </Label>
-                  </div>
-                ))}
+                    Hamming
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-cyan-400">
+                  <RadioGroupItem value="repetition" id="type-repetition" className="border-cyan-400 text-cyan-400" />
+                  <Label
+                    htmlFor="type-repetition"
+                    className="text-zinc-300 cursor-pointer uppercase font-bold text-[10px]"
+                  >
+                    Repetition
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-cyan-400">
+                  <RadioGroupItem value="none" id="type-none" className="border-cyan-400 text-cyan-400" />
+                  <Label htmlFor="type-none" className="text-zinc-300 cursor-pointer uppercase font-bold text-[10px]">
+                    None
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-cyan-400">
+                  <RadioGroupItem value="generic" id="type-generic" className="border-cyan-400 text-cyan-400" />
+                  <Label
+                    htmlFor="type-generic"
+                    className="text-zinc-300 cursor-pointer uppercase font-bold text-[10px]"
+                  >
+                    Generic
+                  </Label>
+                </div>
               </RadioGroup>
             </div>
+
+            {protocolType !== "none" && protocolType !== "generic" && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                <Label className="text-lime-400 font-bold uppercase tracking-widest">
+                  {protocolType === "repetition" ? "Repetition Factor" : "Code Configuration"}
+                </Label>
+                <RadioGroup value={protocolParam} onValueChange={setProtocolParam} className="grid grid-cols-2 gap-2">
+                  {protocolType === "repetition" ? (
+                    <>
+                      {[3, 5].map((val) => (
+                        <div
+                          key={val}
+                          className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-pink-500"
+                        >
+                          <RadioGroupItem
+                            value={val.toString()}
+                            id={`rep-${val}`}
+                            className="border-pink-500 text-pink-500"
+                          />
+                          <Label
+                            htmlFor={`rep-${val}`}
+                            className="text-zinc-300 cursor-pointer uppercase font-bold text-xs"
+                          >
+                            1/{val} Factor
+                          </Label>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-pink-500">
+                        <RadioGroupItem value="74" id="ham-74" className="border-pink-500 text-pink-500" />
+                        <Label htmlFor="ham-74" className="text-zinc-300 cursor-pointer uppercase font-bold text-xs">
+                          (7,4) Standard
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-pink-500">
+                        <RadioGroupItem value="1511" id="ham-1511" className="border-pink-500 text-pink-500" />
+                        <Label htmlFor="ham-1511" className="text-zinc-300 cursor-pointer uppercase font-bold text-xs">
+                          (15,11) Extended
+                        </Label>
+                      </div>
+                    </>
+                  )}
+                </RadioGroup>
+              </div>
+            )}
+
+            {protocolType === "generic" && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300 border-2 border-lime-500/30 p-4 rounded bg-lime-950/20">
+                <Label className="text-lime-400 font-bold uppercase tracking-widest text-xs">
+                  Generic Protocol Configuration
+                </Label>
+
+                <div className="space-y-2">
+                  <Label className="text-zinc-400 text-[10px] uppercase">Encoding Type</Label>
+                  <RadioGroup
+                    value={genericType}
+                    onValueChange={(val: any) => setGenericType(val)}
+                    className="grid grid-cols-2 gap-2"
+                  >
+                    <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-lime-500">
+                      <RadioGroupItem value="hamming" id="gen-hamming" className="border-lime-500 text-lime-500" />
+                      <Label htmlFor="gen-hamming" className="text-zinc-300 cursor-pointer uppercase font-bold text-xs">
+                        Hamming
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-2 bg-black/50 p-2 border-2 border-zinc-700 rounded cursor-pointer hover:border-lime-500">
+                      <RadioGroupItem
+                        value="repetition"
+                        id="gen-repetition"
+                        className="border-lime-500 text-lime-500"
+                      />
+                      <Label
+                        htmlFor="gen-repetition"
+                        className="text-zinc-300 cursor-pointer uppercase font-bold text-xs"
+                      >
+                        Repetition
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-zinc-400 text-[10px] uppercase">
+                      {genericType === "hamming" ? "Block Length (n)" : "Repetition Factor (n)"}
+                    </Label>
+                    <Input
+                      type="number"
+                      value={genericN}
+                      onChange={(e) => setGenericN(e.target.value)}
+                      placeholder="31"
+                      min="3"
+                      className="bg-black border-2 border-lime-500 text-lime-400 font-mono focus:ring-lime-400 h-10"
+                    />
+                  </div>
+
+                  {genericType === "hamming" && (
+                    <div className="space-y-2">
+                      <Label className="text-zinc-400 text-[10px] uppercase">Data Bits (k)</Label>
+                      <Input
+                        type="number"
+                        value={genericK}
+                        onChange={(e) => setGenericK(e.target.value)}
+                        placeholder="26"
+                        min="1"
+                        className="bg-black border-2 border-lime-500 text-lime-400 font-mono focus:ring-lime-400 h-10"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-[10px] text-zinc-500 font-mono leading-relaxed border-t border-zinc-800 pt-2 mt-2">
+                  {genericType === "hamming"
+                    ? `Hamming (${genericN},${genericK}) | Rate: ${(Number.parseInt(genericK) / Number.parseInt(genericN) || 0).toFixed(3)}`
+                    : `Repetition 1/${genericN} | Rate: ${(1 / Number.parseInt(genericN) || 0).toFixed(3)}`}
+                </div>
+              </div>
+            )}
 
             <Button
               onClick={handleUpdatePlot}
