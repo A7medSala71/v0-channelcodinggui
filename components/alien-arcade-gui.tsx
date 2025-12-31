@@ -8,101 +8,22 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts"
 import { Activity, Zap, Cpu, Terminal, ShieldAlert } from "lucide-react"
+import { PROTOCOLS, type Protocol, uncodedProtocol } from "@/lib/protocols"
 
-// --- SIMULATION ENGINE (Ported from Python) ---
-
-const repetitionEncode = (bits: number[], rateFactor: number) => {
-  return bits.flatMap((bit) => Array(rateFactor).fill(bit))
-}
-
-const repetitionDecode = (bits: number[], rateFactor: number) => {
-  const decoded: number[] = []
-  for (let i = 0; i < bits.length; i += rateFactor) {
-    const chunk = bits.slice(i, i + rateFactor)
-    const sum = chunk.reduce((a, b) => a + b, 0)
-    decoded.push(sum > rateFactor / 2 ? 1 : 0)
-  }
-  return decoded
-}
-
-// Simplified Hamming (7,4) logic for demo parity
-const hamming74Encode = (bits: number[]) => {
-  const encoded: number[] = []
-  for (let i = 0; i < bits.length; i += 4) {
-    const b = bits.slice(i, i + 4)
-    if (b.length < 4) break
-    const p1 = (b[0] + b[1] + b[3]) % 2
-    const p2 = (b[0] + b[2] + b[3]) % 2
-    const p3 = (b[1] + b[2] + b[3]) % 2
-    encoded.push(p1, p2, b[0], p3, b[1], b[2], b[3])
-  }
-  return encoded
-}
-
-const hamming74Decode = (bits: number[]) => {
-  const decoded: number[] = []
-  for (let i = 0; i < bits.length; i += 7) {
-    const r = bits.slice(i, i + 7)
-    if (r.length < 7) break
-    const s1 = (r[0] + r[1] + r[2] + r[4]) % 2
-    const s2 = (r[0] + r[1] + r[3] + r[5]) % 2
-    const s3 = (r[0] + r[2] + r[3] + r[6]) % 2
-    // Simplified correction (only extracting info bits for simulation)
-    decoded.push(r[2], r[4], r[5], r[6])
-  }
-  return decoded
-}
-
-const hamming1511Encode = (bits: number[]) => {
-  const encoded: number[] = []
-  for (let i = 0; i < bits.length; i += 11) {
-    const b = bits.slice(i, i + 11)
-    if (b.length < 11) break
-    // Standard Hamming(15,11) parity bit positions (1, 2, 4, 8)
-    const p1 = (b[0] + b[1] + b[3] + b[4] + b[6] + b[8] + b[10]) % 2
-    const p2 = (b[0] + b[2] + b[3] + b[5] + b[6] + b[9] + b[10]) % 2
-    const p3 = (b[1] + b[2] + b[3] + b[7] + b[8] + b[9] + b[10]) % 2
-    const p4 = (b[4] + b[5] + b[6] + b[7] + b[8] + b[9] + b[10]) % 2
-    // Construct 15-bit codeword: P1, P2, D1, P3, D2, D3, D4, P4, D5, D6, D7, D8, D9, D10, D11
-    encoded.push(p1, p2, b[0], p3, b[1], b[2], b[3], p4, b[4], b[5], b[6], b[7], b[8], b[9], b[10])
-  }
-  return encoded
-}
-
-const hamming1511Decode = (bits: number[]) => {
-  const decoded: number[] = []
-  for (let i = 0; i < bits.length; i += 15) {
-    const r = bits.slice(i, i + 15)
-    if (r.length < 15) break
-    decoded.push(r[2], r[4], r[5], r[6], r[8], r[9], r[10], r[11], r[12], r[13], r[14])
-  }
-  return decoded
-}
-
-const simulateBer = (snrDb: number, channelType: string, codeType: string) => {
+const simulateBer = (snrDb: number, channelType: string, protocol: Protocol) => {
   const numBits = 1000
-  let rate = 1.0
-
-  if (codeType === "rep1/3") rate = 1 / 3
-  else if (codeType === "rep1/5") rate = 1 / 5
-  else if (codeType === "hamming74") rate = 4 / 7
-  else if (codeType === "hamming1511") rate = 11 / 15
-  else if (codeType === "none") rate = 1.0
+  const rate = protocol.rate
 
   const txBits = Array.from({ length: numBits }, () => (Math.random() > 0.5 ? 1 : 0))
 
-  let coded = txBits
-  if (codeType === "rep1/3") coded = repetitionEncode(txBits, 3)
-  else if (codeType === "rep1/5") coded = repetitionEncode(txBits, 5)
-  else if (codeType === "hamming74") coded = hamming74Encode(txBits)
-  else if (codeType === "hamming1511") coded = hamming1511Encode(txBits)
+  const coded = protocol.encode(txBits)
 
   const snrLinear = Math.pow(10, snrDb / 10.0)
   const sigma = Math.sqrt(1 / (2 * snrLinear * rate))
 
   const rxBits = coded.map((bit) => {
     let x = 2 * bit - 1
-    const noise = sigma * (Math.random() + Math.random() + Math.random() + Math.random() - 2) // Simple Gaussian approx
+    const noise = sigma * (Math.random() + Math.random() + Math.random() + Math.random() - 2)
     if (channelType === "rayleigh") {
       const h = Math.sqrt((Math.pow(Math.random(), 2) + Math.pow(Math.random(), 2)) / 2)
       x = h * x
@@ -110,11 +31,7 @@ const simulateBer = (snrDb: number, channelType: string, codeType: string) => {
     return x + noise > 0 ? 1 : 0
   })
 
-  let decoded = rxBits
-  if (codeType === "rep1/3") decoded = repetitionDecode(rxBits, 3)
-  else if (codeType === "rep1/5") decoded = repetitionDecode(rxBits, 5)
-  else if (codeType === "hamming74") decoded = hamming74Decode(rxBits)
-  else if (codeType === "hamming1511") decoded = hamming1511Decode(rxBits)
+  const decoded = protocol.decode(rxBits)
 
   let errors = 0
   const limit = Math.min(txBits.length, decoded.length)
@@ -127,14 +44,14 @@ const simulateBer = (snrDb: number, channelType: string, codeType: string) => {
 export default function AlienArcadeGUI() {
   const [snrRange, setSnrRange] = useState({ start: 0, end: 12 })
   const [channelType, setChannelType] = useState("awgn")
-  const [codeType, setCodeType] = useState("hamming74")
+  const [currentProtocol, setCurrentProtocol] = useState<Protocol>(PROTOCOLS[3]) // Default to Hamming(7,4)
   const [chartData, setChartData] = useState<any[]>([])
 
   const handleUpdatePlot = () => {
     const data = []
     for (let snr = snrRange.start; snr <= snrRange.end; snr += 1) {
-      const berCoded = simulateBer(snr, channelType, codeType)
-      const berUncoded = simulateBer(snr, channelType, "none")
+      const berCoded = simulateBer(snr, channelType, currentProtocol)
+      const berUncoded = simulateBer(snr, channelType, uncodedProtocol)
       data.push({
         snr,
         berCoded: berCoded || 1e-6,
@@ -206,21 +123,19 @@ export default function AlienArcadeGUI() {
 
             <div className="space-y-4">
               <Label className="text-lime-400 font-bold uppercase tracking-widest">Protocol (Coding Scheme)</Label>
-              <RadioGroup value={codeType} onValueChange={setCodeType} className="space-y-2">
-                {[
-                  { id: "none", label: "Uncoded (Raw)" },
-                  { id: "rep1/3", label: "Repetition 1/3" },
-                  { id: "rep1/5", label: "Repetition 1/5" },
-                  { id: "hamming74", label: "Hamming (7,4)" },
-                  { id: "hamming1511", label: "Hamming (15,11)" },
-                ].map((option) => (
+              <RadioGroup
+                value={currentProtocol.id}
+                onValueChange={(id) => setCurrentProtocol(PROTOCOLS.find((p) => p.id === id) || uncodedProtocol)}
+                className="space-y-2"
+              >
+                {PROTOCOLS.map((protocol) => (
                   <div
-                    key={option.id}
+                    key={protocol.id}
                     className="flex items-center space-x-2 bg-black/50 p-3 border-2 border-zinc-700 rounded cursor-pointer hover:border-cyan-400 transition-colors"
                   >
-                    <RadioGroupItem value={option.id} id={option.id} className="border-cyan-400 text-cyan-400" />
-                    <Label htmlFor={option.id} className="text-zinc-300 cursor-pointer uppercase font-bold text-xs">
-                      {option.label}
+                    <RadioGroupItem value={protocol.id} id={protocol.id} className="border-cyan-400 text-cyan-400" />
+                    <Label htmlFor={protocol.id} className="text-zinc-300 cursor-pointer uppercase font-bold text-xs">
+                      {protocol.label}
                     </Label>
                   </div>
                 ))}
@@ -245,7 +160,6 @@ export default function AlienArcadeGUI() {
           </CardHeader>
           <CardContent className="p-6">
             <div className="h-[500px] w-full bg-black border-2 border-zinc-800 p-4 rounded relative overflow-hidden group">
-              {/* Scanline Effect Overlay */}
               <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,118,0.06))] z-10 bg-[length:100%_2px,3px_100%] opacity-50 group-hover:opacity-100 transition-opacity" />
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
@@ -282,7 +196,7 @@ export default function AlienArcadeGUI() {
                   <Line
                     type="monotone"
                     dataKey="berCoded"
-                    name={`${codeType.toUpperCase()} CODED`}
+                    name={`${currentProtocol.label.toUpperCase()} CODED`}
                     stroke="#ec4899"
                     strokeWidth={4}
                     dot={{ r: 6, fill: "#ec4899", strokeWidth: 2, stroke: "#000" }}
